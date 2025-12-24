@@ -112,6 +112,9 @@ def detect_intent(text: str):
 
 def update_state_from_text(text, state: DialogueState):
     domain = detect_domain(text)
+    if domain and domain != state.domain.value:
+        state.intent.value = None
+       state.intent.confidence = 0.0
     role = detect_role(text)
     subject = detect_subject(text)
     intent = detect_intent(text)
