@@ -58,14 +58,22 @@ def detect_dialogue_act(text: str) -> str:
 
     return "fresh_query"
 
+import joblib
 
-def detect_domain(text: str):
-    t = text.lower()
-    if any(x in t for x in ["pm", "prime minister", "parliament", "government"]):
-        return "Politics"
-    if any(x in t for x in ["captain", "cricket", "football", "team"]):
-        return "Sports"
-    return None
+clf = joblib.load("topic_classifier.pkl")
+vectorizer = joblib.load("topic_vectorizer.pkl")
+
+def predict_topic(text):
+    vec = vectorizer.transform([text])
+    return clf.predict(vec)[0]
+
+#def detect_domain(text: str):
+#    t = text.lower()
+#    if any(x in t for x in ["pm", "prime minister", "parliament", "government"]):
+#        return "Politics"
+#    if any(x in t for x in ["captain", "cricket", "football", "team"]):
+#        return "Sports"
+#    return None
 
 
 def detect_role(text: str):
@@ -111,10 +119,15 @@ def detect_intent(text: str):
 # ========================================
 
 def update_state_from_text(text, state: DialogueState):
-    domain = detect_domain(text)
+    domain = predict_topic(text)
+
+    if domain == "Unknown":
+        domain = None
+
     if domain and domain != state.domain.value:
         state.intent.value = None
         state.intent.confidence = 0.0
+
     role = detect_role(text)
     subject = detect_subject(text)
     intent = detect_intent(text)
@@ -134,6 +147,7 @@ def update_state_from_text(text, state: DialogueState):
     if intent:
         state.intent.value = intent
         state.intent.confidence = 1.0
+
 
 
 # ========================================
