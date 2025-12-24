@@ -169,7 +169,15 @@ def process_turn(user_text, state: DialogueState):
     if act == "chit_chat":
         return None, ("General", "NA"), "chit_chat", state.snapshot()
 
-    update_state_from_text(user_text, state)
+    # 🔴 CRITICAL FIX:
+    # For contextual continuation, DO NOT update domain
+    if act == "contextual_continuation":
+        # Update only geography / role / intent, but freeze domain
+        prev_domain = state.domain.value
+        update_state_from_text(user_text, state)
+        state.domain.value = prev_domain
+    else:
+        update_state_from_text(user_text, state)
 
     expanded, note = None, None
     if act == "contextual_continuation":
@@ -177,7 +185,9 @@ def process_turn(user_text, state: DialogueState):
         expanded, note = resolve_expansion(candidates)
 
     topic = assign_topic(expanded if expanded else user_text, state, act)
+
     return expanded, topic, note, state.snapshot()
+
 
 
 # ===================== STREAMLIT UI ===================== #
