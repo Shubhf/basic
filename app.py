@@ -6,6 +6,26 @@ from copy import deepcopy
 # ========================================
 # CORE DATA STRUCTURES
 # ========================================
+KNOWLEDGE = {
+    ("Prime Minister", "India"): "Narendra Modi",
+    ("Prime Minister", "US"): "Joe Biden",
+    ("Prime Minister", "UK"): "Rishi Sunak",
+
+    ("Captain", "India"): "Rohit Sharma",
+    ("Captain", "US"): "Varies by team and sport.",
+    ("Captain", "UK"): "Depends on the team."
+}
+
+DUTIES = {
+    "Prime Minister": (
+        "Leads the government, sets national policy, chairs the cabinet, "
+        "represents the country internationally, and oversees administration."
+    ),
+    "Captain": (
+        "Leads strategy on the field, motivates teammates, coordinates with coaches, "
+        "and makes tactical decisions during play."
+    )
+}
 
 @dataclass
 class ContextFrame:
@@ -107,6 +127,27 @@ def detect_subject(text: str):
 
     return candidate
 
+def answer(expanded, state: DialogueState):
+    if expanded is None:
+        return None
+
+    role = state.role.value
+    subject = state.subject.value
+
+    # Case 1: duties questions
+    if "duties" in expanded.lower() or "responsibilities" in expanded.lower():
+        if role in DUTIES:
+            return DUTIES[role]
+        return "Not sure about the responsibilities for this role."
+
+    # Case 2: who / identity questions
+    if role and subject and (role, subject) in KNOWLEDGE:
+        return KNOWLEDGE[(role, subject)]
+
+    if role and subject:
+        return f"I don't have the exact answer for {role} of {subject} yet."
+
+    return None
 
 
 def detect_intent(text: str):
@@ -239,7 +280,7 @@ def process_turn(user_text, state: DialogueState):
     act = detect_dialogue_act(user_text)
 
     if act == "chit_chat":
-        return None, ("General", "NA"), "chit_chat", state.snapshot()
+        return None, ("General", "NA"), "chit_chat", None, state.snapshot()
 
     # freeze domain on continuation
     if act == "contextual_continuation":
@@ -249,10 +290,16 @@ def process_turn(user_text, state: DialogueState):
     else:
         update_state_from_text(user_text, state)
 
+    # expand
     expanded, note = expand_query(user_text, state, act)
+
+    # assign topic
     topic = assign_topic(expanded or user_text, state)
 
-    # 🔎 LOGGING (for debugging + screenshots)
+    # *** NEW: generate answer ***
+    ans = answer(expanded or user_text, state)
+
+    # logging
     print("LOG:", {
         "user": user_text,
         "act": act,
@@ -261,10 +308,12 @@ def process_turn(user_text, state: DialogueState):
         "domain": state.domain.value,
         "subject": state.subject.value,
         "role": state.role.value,
-        "intent": state.intent.value
+        "intent": state.intent.value,
+        "answer": ans
     })
 
-    return expanded, topic, note, state.snapshot()
+    return expanded, topic, note, ans, state.snapshot()
+
 
 
 
