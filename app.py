@@ -246,7 +246,20 @@ def process_turn(user_text, state: DialogueState):
     expanded, note = expand_query(user_text, state, act)
     topic = assign_topic(expanded or user_text, state)
 
+    # 🔎 LOGGING (for debugging + screenshots)
+    print("LOG:", {
+        "user": user_text,
+        "act": act,
+        "expanded": expanded,
+        "topic": topic,
+        "domain": state.domain.value,
+        "subject": state.subject.value,
+        "role": state.role.value,
+        "intent": state.intent.value
+    })
+
     return expanded, topic, note, state.snapshot()
+
 
 
 # ========================================
