@@ -89,18 +89,24 @@ def detect_role(text: str):
 
 def detect_subject(text: str):
     # Very generic: take final token-ish subject mention
-    # Later ML can replace this
     words = text.strip().split()
     if len(words) <= 2:
         return None
 
-    # crude heuristic — last word often entity
     candidate = words[-1].strip("?.!,").title()
 
-    if candidate.lower() in ["who", "what", "about", "is", "pm", "captain"]:
+    # ignore words that are clearly NOT subjects
+    role_like = [
+        "who", "what", "about", "is",
+        "pm", "captain", "coach", "minister",
+        "president", "leader"
+    ]
+
+    if candidate.lower() in role_like:
         return None
 
     return candidate
+
 
 
 def detect_intent(text: str):
