@@ -3,7 +3,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 from copy import deepcopy
 
-# ===================== CORE LOGIC ===================== #
+# ========================================
+# CORE DATA STRUCTURES
+# ========================================
 
 @dataclass
 class ContextFrame:
@@ -18,25 +20,29 @@ class ContextFrame:
 
 @dataclass
 class DialogueState:
-    domain: ContextFrame = field(default_factory=ContextFrame)
-    geography: ContextFrame = field(default_factory=ContextFrame)
-    role: ContextFrame = field(default_factory=ContextFrame)
-    intent: ContextFrame = field(default_factory=ContextFrame)
+    domain: ContextFrame = field(default_factory=ContextFrame)   # politics / sports / general
+    subject: ContextFrame = field(default_factory=ContextFrame)  # india, uk, liverpool, etc
+    role: ContextFrame = field(default_factory=ContextFrame)     # prime minister, captain …
+    intent: ContextFrame = field(default_factory=ContextFrame)   # duties, who, info …
 
     def decay_all(self):
         self.domain.decay()
-        self.geography.decay()
+        self.subject.decay()
         self.role.decay()
         self.intent.decay()
 
     def snapshot(self):
         return {
             "domain": vars(self.domain),
-            "geography": vars(self.geography),
+            "subject": vars(self.subject),
             "role": vars(self.role),
             "intent": vars(self.intent),
         }
 
+
+# ========================================
+# DETECTORS
+# ========================================
 
 def detect_dialogue_act(text: str) -> str:
     t = text.lower()
@@ -47,120 +53,163 @@ def detect_dialogue_act(text: str) -> str:
     if any(x in t for x in ["now tell me", "switch to", "change topic"]):
         return "topic_shift"
 
-    if any(x in t for x in ["his ", "her ", "their ", "what about", "same"]):
+    if any(x in t for x in ["what about", "his", "her", "their", "that", "more about"]):
         return "contextual_continuation"
 
     return "fresh_query"
 
 
-COUNTRIES = ["india", "uk", "us", "united states"]
-SPORTS = ["cricket", "football"]
-
-
-def detect_domain(text):
+def detect_domain(text: str):
     t = text.lower()
-    if any(x in t for x in SPORTS):
-        return "Sports"
-    if "prime minister" in t or "pm" in t:
+    if any(x in t for x in ["pm", "prime minister", "parliament", "government"]):
         return "Politics"
+    if any(x in t for x in ["captain", "cricket", "football", "team"]):
+        return "Sports"
     return None
 
 
-def detect_geography(text):
+def detect_role(text: str):
     t = text.lower()
-    for c in COUNTRIES:
-        if c in t:
-            return "US" if c in ["us", "united states"] else c.title()
+    if "prime minister" in t or "pm" in t:
+        return "Prime Minister"
+    if "captain" in t:
+        return "Captain"
+    if "coach" in t:
+        return "Coach"
     return None
 
+
+def detect_subject(text: str):
+    # Very generic: take final token-ish subject mention
+    # Later ML can replace this
+    words = text.strip().split()
+    if len(words) <= 2:
+        return None
+
+    # crude heuristic — last word often entity
+    candidate = words[-1].strip("?.!,").title()
+
+    if candidate.lower() in ["who", "what", "about", "is", "pm", "captain"]:
+        return None
+
+    return candidate
+
+
+def detect_intent(text: str):
+    t = text.lower()
+    if "duties" in t or "responsibilities" in t:
+        return "duties"
+    if "who" in t:
+        return "who"
+    if "tell me" in t or "about" in t:
+        return "info"
+    return None
+
+
+# ========================================
+# STATE UPDATE
+# ========================================
 
 def update_state_from_text(text, state: DialogueState):
     domain = detect_domain(text)
-    geo = detect_geography(text)
-
-    if domain and domain != state.domain.value:
-        state.role.value = None
-        state.role.confidence = 0.0
-        state.intent.value = None
-        state.intent.confidence = 0.0
+    role = detect_role(text)
+    subject = detect_subject(text)
+    intent = detect_intent(text)
 
     if domain:
         state.domain.value = domain
         state.domain.confidence = 1.0
 
-    if geo:
-        state.geography.value = geo
-        state.geography.confidence = 1.0
+    if subject:
+        state.subject.value = subject
+        state.subject.confidence = 1.0
 
-    if "prime minister" in text.lower() or "pm" in text.lower():
-        state.role.value = "Prime Minister"
+    if role:
+        state.role.value = role
         state.role.confidence = 1.0
 
-    if "captain" in text.lower():
-        state.role.value = "Captain"
-        state.role.confidence = 1.0
-
-    if "duties" in text.lower():
-        state.intent.value = "duties"
+    if intent:
+        state.intent.value = intent
         state.intent.confidence = 1.0
 
 
-def generate_expansion_candidates(text, state: DialogueState):
-    candidates = []
-    t = text.lower()
+# ========================================
+# EXPANSION ENGINE
+# ========================================
 
-    if any(x in t for x in ["his duties", "her duties", "their duties"]):
-        if state.role.value and state.geography.value:
-            candidates.append(
-                f"What are the duties of the {state.role.value} of {state.geography.value}?"
-            )
-        return candidates
+def expand_query(user_text, state: DialogueState, act: str):
+    """
+    Always try to rewrite into a fully explicit question.
+    If context missing → return clarify.
+    """
 
+    # If it's not contextual, no expansion needed
+    if act != "contextual_continuation":
+        return None, None
+
+    # Need at least subject or role to expand
+    if not state.subject.value and not state.role.value:
+        return None, "clarify: not enough context"
+
+    t = user_text.lower()
+
+    # Case: "what about X"
     if "what about" in t:
-        geo = detect_geography(text)
-        if not geo:
-            return candidates
+        new_subject = detect_subject(user_text)
 
-        if state.domain.value == "Sports":
-            if state.role.value == "Captain":
-                candidates.append(f"Who is the captain of the {geo} team?")
-            else:
-                candidates.append(f"What is the status of sports in {geo}?")
-
-        elif state.domain.value == "Politics" and state.role.value == "Prime Minister":
-            candidates.append(
-                f"Who is the prime minister of {geo} and what are his duties?"
+        if new_subject:
+            # user explicitly changed subject
+            if state.role.value:
+                return (
+                    f"Who is the {state.role.value} of {new_subject}?",
+                    None
+                )
+            return (
+                f"Tell me more about {new_subject}.",
+                None
             )
 
-    return candidates
+        # No explicit new subject, use old one
+        if state.role.value and state.subject.value:
+            return (
+                f"Who is the {state.role.value} of {state.subject.value}?",
+                None
+            )
+
+        return None, "clarify: what exactly do you want to know?"
+
+    # Case: pronoun / vague reference like "his duties"
+    if "duties" in t or "responsibilities" in t:
+        if state.role.value and state.subject.value:
+            return (
+                f"What are the duties of the {state.role.value} of {state.subject.value}?",
+                None
+            )
+        return None, "clarify: whose duties?"
+
+    # Other implicit references
+    if state.role.value and state.subject.value:
+        return (
+            f"Tell me more about the {state.role.value} of {state.subject.value}.",
+            None
+        )
+
+    return None, "clarify: cannot infer expansion"
 
 
-def resolve_expansion(candidates):
-    if not candidates:
-        return None, "no_context"
-    if len(candidates) == 1:
-        return candidates[0], None
-    return None, f"clarify: {candidates}"
+# ========================================
+# TOPIC ASSIGNMENT
+# ========================================
 
-
-def assign_topic(text, state: DialogueState, act: str):
-    t = text.lower()
-    geo = state.geography.value or "NA"
-
-    if "prime minister" in t or "pm" in t:
-        return "Politics", geo
-
-    if "captain" in t or any(x in t for x in ["cricket", "football", "sports"]):
-        return "Sports", geo
-
-    if act == "contextual_continuation" and state.domain.value:
-        return state.domain.value, geo
-
+def assign_topic(text, state: DialogueState):
     if state.domain.value:
-        return state.domain.value, geo
-
+        return state.domain.value, state.subject.value or "NA"
     return "General", "NA"
 
+
+# ========================================
+# MAIN TURN HANDLER
+# ========================================
 
 def process_turn(user_text, state: DialogueState):
     state.decay_all()
@@ -169,43 +218,38 @@ def process_turn(user_text, state: DialogueState):
     if act == "chit_chat":
         return None, ("General", "NA"), "chit_chat", state.snapshot()
 
-    # 🔴 CRITICAL FIX:
-    # For contextual continuation, DO NOT update domain
+    # freeze domain on continuation
     if act == "contextual_continuation":
-        # Update only geography / role / intent, but freeze domain
         prev_domain = state.domain.value
         update_state_from_text(user_text, state)
         state.domain.value = prev_domain
     else:
         update_state_from_text(user_text, state)
 
-    expanded, note = None, None
-    if act == "contextual_continuation":
-        candidates = generate_expansion_candidates(user_text, state)
-        expanded, note = resolve_expansion(candidates)
-
-    topic = assign_topic(expanded if expanded else user_text, state, act)
+    expanded, note = expand_query(user_text, state, act)
+    topic = assign_topic(expanded or user_text, state)
 
     return expanded, topic, note, state.snapshot()
 
 
+# ========================================
+# STREAMLIT UI
+# ========================================
 
-# ===================== STREAMLIT UI ===================== #
-
-st.set_page_config(page_title="Context-aware Query Expansion", layout="wide")
-st.title("Context-aware Query Expansion & Topic Tagging")
-st.markdown("👋 App loaded. Enter a query below to begin.")
+st.set_page_config(page_title="Context-Aware Expansion", layout="wide")
+st.title("Context-Aware Query Expansion (Subject-based)")
 
 if "conversation" not in st.session_state:
     st.session_state.conversation = []
     st.session_state.state = DialogueState()
 
-user_input = st.text_input("User input", key="user_input")
+user_input = st.text_input("User input", key="u")
 
 if st.button("Submit") and user_input:
     expanded, topic, note, snap = process_turn(
         user_input, st.session_state.state
     )
+
     st.session_state.conversation.append({
         "user": user_input,
         "expanded": expanded,
@@ -224,7 +268,7 @@ with col1:
             st.markdown(f"**Expanded:** {turn['expanded']}")
         st.markdown(f"**Topic:** {turn['topic'][0]} → {turn['topic'][1]}")
         if turn["note"]:
-            st.warning(turn["note"])
+            st.info(turn["note"])
         st.markdown("---")
 
 with col2:
@@ -232,6 +276,6 @@ with col2:
     if st.session_state.conversation:
         st.json(st.session_state.conversation[-1]["state"])
 
-if st.button("Reset Conversation"):
+if st.button("Reset"):
     st.session_state.conversation = []
     st.session_state.state = DialogueState()
