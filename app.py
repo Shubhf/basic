@@ -331,30 +331,42 @@ if "conversation" not in st.session_state:
 user_input = st.text_input("User input", key="u")
 
 if st.button("Submit") and user_input:
-    expanded, topic, note, snap = process_turn(
-        user_input, st.session_state.state
-    )
+    expanded, topic, note, ans, snap = process_turn(
+    user_input, st.session_state.state
+)
+
 
     st.session_state.conversation.append({
         "user": user_input,
         "expanded": expanded,
         "topic": topic,
         "note": note,
+        "answer": ans,
         "state": deepcopy(snap)
+
     })
 
 col1, col2 = st.columns([2, 1])
 
 with col1:
     st.subheader("Conversation")
+
     for turn in st.session_state.conversation:
         st.markdown(f"**User:** {turn['user']}")
+
         if turn["expanded"]:
             st.markdown(f"**Expanded:** {turn['expanded']}")
+
         st.markdown(f"**Topic:** {turn['topic'][0]} → {turn['topic'][1]}")
+
+        if turn.get("answer"):
+            st.success(f"Answer: {turn['answer']}")
+
         if turn["note"]:
             st.info(turn["note"])
+
         st.markdown("---")
+
 
 with col2:
     st.subheader("Dialogue State (latest)")
