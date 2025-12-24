@@ -8,7 +8,7 @@ from copy import deepcopy
 # ========================================
 KNOWLEDGE = {
     ("Prime Minister", "India"): "Narendra Modi",
-    ("Prime Minister", "US"): "Joe Biden",
+    ("Prime Minister", "US"): "Donald trump",
     ("Prime Minister", "UK"): "Rishi Sunak",
 
     ("Captain", "India"): "Rohit Sharma",
