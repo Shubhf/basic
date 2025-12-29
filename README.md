@@ -74,3 +74,23 @@ User: Who is captain of India
 User: what about UK
 → Who is the Captain of UK?
 
+
+**Answer Engine**
+
+Returns safe, grounded answers from a small internal knowledge base.
+
+---
+
+## 🚀 Running the App
+
+### Streamlit Cloud
+If deployed, simply open the app link.
+
+### Local
+
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+Then open:
+https://6rk4jyprfubqpnz4p9yqwe.streamlit.app/
+
