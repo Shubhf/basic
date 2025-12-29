@@ -36,3 +36,39 @@ This project builds a lightweight reasoning engine that:
 ## 🧠 Architecture
 
 ![App Screenshot](https://github.com/Shubhf/basic/blob/main/Flowchart.png)
+
+
+### Components
+
+**Dialogue Act Detector**  
+Detects whether input is:
+
+- new query
+- contextual continuation
+- casual chat
+
+**Topic Classifier (ML)**  
+TF-IDF + Logistic Regression trained on synthetic data:
+
+- Politics
+- Sports
+- General
+- Unknown
+
+**Context State**  
+Tracks conversation memory:
+
+| Field   | Meaning |
+|--------|---------|
+| domain | politics, sports, general |
+| subject | india, us, uk… |
+| role | prime minister, captain… |
+| intent | who, duties, info… |
+
+**Expansion Engine**
+
+Turns vague messages into explicit queries.
+
+Example:
+
+
