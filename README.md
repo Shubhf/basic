@@ -35,4 +35,4 @@ This project builds a lightweight reasoning engine that:
 
 ## 🧠 Architecture
 
-
+![App Screenshot](https://github.com/Shubhf/basic/blob/main/Flowchart.png)
