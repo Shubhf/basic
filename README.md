@@ -70,5 +70,7 @@ Tracks conversation memory:
 Turns vague messages into explicit queries.
 
 Example:
-
+User: Who is captain of India
+User: what about UK
+→ Who is the Captain of UK?
 
