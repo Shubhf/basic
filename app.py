@@ -84,18 +84,34 @@ def predict_topic(text):
 # ========================================
 
 def detect_dialogue_act(text: str) -> str:
-    t = text.lower()
+    t = text.lower().strip()
 
+    # small talk
     if any(x in t for x in ["thanks", "wait", "ok", "fine"]):
         return "chit_chat"
 
+    # explicit topic shift
     if any(x in t for x in ["now tell me", "switch to", "change topic"]):
         return "topic_shift"
 
-    if any(x in t for x in ["what about", "his", "her", "their", "more about"]):
+    # TRUE contextual patterns only
+    CONTEXT_TRIGGERS = [
+        "what about",
+        "and what about",
+        "his",
+        "her",
+        "their",
+        "same there",
+        "same here",
+        "more about",
+        "and there"
+    ]
+
+    if any(t.startswith(x) or x in t.split() for x in CONTEXT_TRIGGERS):
         return "contextual_continuation"
 
     return "fresh_query"
+
 
 
 def detect_role(text: str):
