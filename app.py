@@ -7,6 +7,7 @@ import joblib
 # ========================================
 # KNOWLEDGE BASE
 # ========================================
+COUNTRIES = ["india", "uk", "us", "germany", "france", "australia"]
 
 KNOWLEDGE = {
     ("Prime Minister", "India"): "Narendra Modi",
@@ -126,9 +127,14 @@ def detect_role(text: str):
 
 
 def detect_subject(text: str):
-    words = text.strip().split()
-    if len(words) <= 2:
-        return None
+    t = text.lower()
+
+    for c in COUNTRIES:
+        if c in t:
+            return c.title()
+
+    return None
+
 
     candidate = words[-1].strip("?.!,").title()
 
