@@ -2,13 +2,15 @@ import streamlit as st
 from dataclasses import dataclass, field
 from typing import Optional
 from copy import deepcopy
+import joblib
 
 # ========================================
-# CORE DATA STRUCTURES
+# KNOWLEDGE BASE
 # ========================================
+
 KNOWLEDGE = {
     ("Prime Minister", "India"): "Narendra Modi",
-    ("Prime Minister", "US"): "Donald trump",
+    ("Prime Minister", "US"): "Joe Biden",
     ("Prime Minister", "UK"): "Rishi Sunak",
 
     ("Captain", "India"): "Rohit Sharma",
@@ -27,6 +29,10 @@ DUTIES = {
     )
 }
 
+# ========================================
+# STATE STRUCTURES
+# ========================================
+
 @dataclass
 class ContextFrame:
     value: Optional[str] = None
@@ -40,10 +46,10 @@ class ContextFrame:
 
 @dataclass
 class DialogueState:
-    domain: ContextFrame = field(default_factory=ContextFrame)   # politics / sports / general
-    subject: ContextFrame = field(default_factory=ContextFrame)  # india, uk, liverpool, etc
-    role: ContextFrame = field(default_factory=ContextFrame)     # prime minister, captain …
-    intent: ContextFrame = field(default_factory=ContextFrame)   # duties, who, info …
+    domain: ContextFrame = field(default_factory=ContextFrame)
+    subject: ContextFrame = field(default_factory=ContextFrame)
+    role: ContextFrame = field(default_factory=ContextFrame)
+    intent: ContextFrame = field(default_factory=ContextFrame)
 
     def decay_all(self):
         self.domain.decay()
@@ -61,6 +67,19 @@ class DialogueState:
 
 
 # ========================================
+# MODELS
+# ========================================
+
+clf = joblib.load("topic_classifier.pkl")
+vectorizer = joblib.load("topic_vectorizer.pkl")
+
+
+def predict_topic(text):
+    vec = vectorizer.transform([text])
+    return clf.predict(vec)[0]
+
+
+# ========================================
 # DETECTORS
 # ========================================
 
@@ -73,27 +92,10 @@ def detect_dialogue_act(text: str) -> str:
     if any(x in t for x in ["now tell me", "switch to", "change topic"]):
         return "topic_shift"
 
-    if any(x in t for x in ["what about", "his", "her", "their", "that", "more about"]):
+    if any(x in t for x in ["what about", "his", "her", "their", "more about"]):
         return "contextual_continuation"
 
     return "fresh_query"
-
-import joblib
-
-clf = joblib.load("topic_classifier.pkl")
-vectorizer = joblib.load("topic_vectorizer.pkl")
-
-def predict_topic(text):
-    vec = vectorizer.transform([text])
-    return clf.predict(vec)[0]
-
-#def detect_domain(text: str):
-#    t = text.lower()
-#    if any(x in t for x in ["pm", "prime minister", "parliament", "government"]):
-#        return "Politics"
-#    if any(x in t for x in ["captain", "cricket", "football", "team"]):
-#        return "Sports"
-#    return None
 
 
 def detect_role(text: str):
@@ -108,46 +110,22 @@ def detect_role(text: str):
 
 
 def detect_subject(text: str):
-    # Very generic: take final token-ish subject mention
     words = text.strip().split()
     if len(words) <= 2:
         return None
 
     candidate = words[-1].strip("?.!,").title()
 
-    # ignore words that are clearly NOT subjects
-    role_like = [
+    blocked = {
         "who", "what", "about", "is",
-        "pm", "captain", "coach", "minister",
-        "president", "leader"
-    ]
+        "pm", "captain", "coach",
+        "minister", "president", "leader"
+    }
 
-    if candidate.lower() in role_like:
+    if candidate.lower() in blocked:
         return None
 
     return candidate
-
-def answer(expanded, state: DialogueState):
-    if expanded is None:
-        return None
-
-    role = state.role.value
-    subject = state.subject.value
-
-    # Case 1: duties questions
-    if "duties" in expanded.lower() or "responsibilities" in expanded.lower():
-        if role in DUTIES:
-            return DUTIES[role]
-        return "Not sure about the responsibilities for this role."
-
-    # Case 2: who / identity questions
-    if role and subject and (role, subject) in KNOWLEDGE:
-        return KNOWLEDGE[(role, subject)]
-
-    if role and subject:
-        return f"I don't have the exact answer for {role} of {subject} yet."
-
-    return None
 
 
 def detect_intent(text: str):
@@ -156,31 +134,33 @@ def detect_intent(text: str):
         return "duties"
     if "who" in t:
         return "who"
-    if "tell me" in t or "about" in t:
+    if "about" in t:
         return "info"
     return None
 
 
 # ========================================
-# STATE UPDATE
+# STATE UPDATE — FIXED
 # ========================================
 
 def update_state_from_text(text, state: DialogueState):
-    domain = predict_topic(text)
+    new_domain = predict_topic(text)
 
-    if domain == "Unknown":
-        domain = None
+    if new_domain == "Unknown":
+        new_domain = None
 
-    if domain and domain != state.domain.value:
-        state.intent.value = None
-        state.intent.confidence = 0.0
+    # If topic changes → RESET dependent context
+    if new_domain and new_domain != state.domain.value:
+        state.subject = ContextFrame()
+        state.role = ContextFrame()
+        state.intent = ContextFrame()
 
     role = detect_role(text)
     subject = detect_subject(text)
     intent = detect_intent(text)
 
-    if domain:
-        state.domain.value = domain
+    if new_domain:
+        state.domain.value = new_domain
         state.domain.confidence = 1.0
 
     if subject:
@@ -196,53 +176,33 @@ def update_state_from_text(text, state: DialogueState):
         state.intent.confidence = 1.0
 
 
-
 # ========================================
-# EXPANSION ENGINE
+# EXPANSION
 # ========================================
 
 def expand_query(user_text, state: DialogueState, act: str):
-    """
-    Always try to rewrite into a fully explicit question.
-    If context missing → return clarify.
-    """
-
-    # If it's not contextual, no expansion needed
     if act != "contextual_continuation":
         return None, None
 
-    # Need at least subject or role to expand
-    if not state.subject.value and not state.role.value:
-        return None, "clarify: not enough context"
-
     t = user_text.lower()
 
-    # Case: "what about X"
+    # need context to expand
+    if not state.role.value and not state.subject.value:
+        return None, "clarify: not enough context"
+
     if "what about" in t:
         new_subject = detect_subject(user_text)
 
         if new_subject:
-            # user explicitly changed subject
             if state.role.value:
-                return (
-                    f"Who is the {state.role.value} of {new_subject}?",
-                    None
-                )
-            return (
-                f"Tell me more about {new_subject}.",
-                None
-            )
+                return f"Who is the {state.role.value} of {new_subject}?", None
+            return f"Tell me more about {new_subject}.", None
 
-        # No explicit new subject, use old one
         if state.role.value and state.subject.value:
-            return (
-                f"Who is the {state.role.value} of {state.subject.value}?",
-                None
-            )
+            return f"Who is the {state.role.value} of {state.subject.value}?", None
 
-        return None, "clarify: what exactly do you want to know?"
+        return None, "clarify: what exactly do you mean?"
 
-    # Case: pronoun / vague reference like "his duties"
     if "duties" in t or "responsibilities" in t:
         if state.role.value and state.subject.value:
             return (
@@ -251,7 +211,6 @@ def expand_query(user_text, state: DialogueState, act: str):
             )
         return None, "clarify: whose duties?"
 
-    # Other implicit references
     if state.role.value and state.subject.value:
         return (
             f"Tell me more about the {state.role.value} of {state.subject.value}.",
@@ -262,17 +221,41 @@ def expand_query(user_text, state: DialogueState, act: str):
 
 
 # ========================================
-# TOPIC ASSIGNMENT
+# ANSWER LAYER
+# ========================================
+
+def answer(expanded, state: DialogueState):
+    text = expanded or ""
+
+    role = state.role.value
+    subject = state.subject.value
+
+    if "duties" in text.lower():
+        if role in DUTIES:
+            return DUTIES[role]
+        return "I don't have role responsibilities for this case yet."
+
+    if role and subject and (role, subject) in KNOWLEDGE:
+        return KNOWLEDGE[(role, subject)]
+
+    if role and subject:
+        return f"I don't have the exact answer for {role} of {subject} yet."
+
+    return None
+
+
+# ========================================
+# TOPIC TAG
 # ========================================
 
 def assign_topic(text, state: DialogueState):
     if state.domain.value:
-        return state.domain.value, state.subject.value or "NA"
+        return state.domain.value, (state.subject.value or "NA")
     return "General", "NA"
 
 
 # ========================================
-# MAIN TURN HANDLER
+# MAIN TURN LOOP
 # ========================================
 
 def process_turn(user_text, state: DialogueState):
@@ -282,7 +265,6 @@ def process_turn(user_text, state: DialogueState):
     if act == "chit_chat":
         return None, ("General", "NA"), "chit_chat", None, state.snapshot()
 
-    # freeze domain on continuation
     if act == "contextual_continuation":
         prev_domain = state.domain.value
         update_state_from_text(user_text, state)
@@ -290,35 +272,15 @@ def process_turn(user_text, state: DialogueState):
     else:
         update_state_from_text(user_text, state)
 
-    # expand
     expanded, note = expand_query(user_text, state, act)
-
-    # assign topic
     topic = assign_topic(expanded or user_text, state)
-
-    # *** NEW: generate answer ***
-    ans = answer(expanded or user_text, state)
-
-    # logging
-    print("LOG:", {
-        "user": user_text,
-        "act": act,
-        "expanded": expanded,
-        "topic": topic,
-        "domain": state.domain.value,
-        "subject": state.subject.value,
-        "role": state.role.value,
-        "intent": state.intent.value,
-        "answer": ans
-    })
+    ans = answer(expanded, state)
 
     return expanded, topic, note, ans, state.snapshot()
 
 
-
-
 # ========================================
-# STREAMLIT UI
+# UI
 # ========================================
 
 st.set_page_config(page_title="Context-Aware Expansion", layout="wide")
@@ -332,9 +294,8 @@ user_input = st.text_input("User input", key="u")
 
 if st.button("Submit") and user_input:
     expanded, topic, note, ans, snap = process_turn(
-    user_input, st.session_state.state
-)
-
+        user_input, st.session_state.state
+    )
 
     st.session_state.conversation.append({
         "user": user_input,
@@ -343,7 +304,6 @@ if st.button("Submit") and user_input:
         "note": note,
         "answer": ans,
         "state": deepcopy(snap)
-
     })
 
 col1, col2 = st.columns([2, 1])
@@ -366,7 +326,6 @@ with col1:
             st.info(turn["note"])
 
         st.markdown("---")
-
 
 with col2:
     st.subheader("Dialogue State (latest)")
