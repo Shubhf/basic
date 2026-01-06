@@ -255,16 +255,23 @@ def expand_query(user_text, state: DialogueState, act: str):
 # ========================================
 
 def answer(expanded, state: DialogueState):
-    text = expanded or ""
+    text = (expanded or "").lower()
 
     role = state.role.value
     subject = state.subject.value
+    domain = state.domain.value
 
-    if "duties" in text.lower():
+    # If domain moved to Finance / General → DO NOT use role memory
+    if domain and (domain.startswith("Finance") or domain.startswith("General")):
+        return None
+
+    # duties
+    if "duties" in text or "responsibilities" in text:
         if role in DUTIES:
             return DUTIES[role]
-        return "I don't have role responsibilities for this case yet."
+        return None
 
+    # factual lookup
     if role and subject and (role, subject) in KNOWLEDGE:
         return KNOWLEDGE[(role, subject)]
 
