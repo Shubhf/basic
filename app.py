@@ -281,6 +281,7 @@ def answer(expanded, state: DialogueState):
     return None
 
 
+
 def assign_topic(text, state: DialogueState):
     if state.domain.value:
         return state.domain.value, (state.subject.value or "NA")
