@@ -282,18 +282,34 @@ def process_turn(user_text, state: DialogueState):
     if act == "chit_chat":
         return None, ("General", "NA"), "chit_chat", None, state.snapshot()
 
+    # === SMART CONTEXT BEHAVIOR ===
     if act == "contextual_continuation":
-        prev_domain = state.domain.value
-        update_state_from_text(user_text, state)
-        state.domain.value = prev_domain
+        new_domain = predict_topic(user_text)
+
+        # If the user clearly introduced a new topic → SWITCH
+        if new_domain and new_domain != state.domain.value:
+            update_state_from_text(user_text, state)
+
+        # If vague continuation → reuse previous topic
+        else:
+            prev_domain = state.domain.value
+            update_state_from_text(user_text, state)
+            state.domain.value = prev_domain
+
     else:
         update_state_from_text(user_text, state)
 
+    # Expansion
     expanded, note = expand_query(user_text, state, act)
+
+    # Topic tagging
     topic = assign_topic(expanded or user_text, state)
+
+    # Answer layer
     ans = answer(expanded, state)
 
     return expanded, topic, note, ans, state.snapshot()
+
 
 
 # ========================================
