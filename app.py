@@ -196,6 +196,14 @@ def update_state_from_text(text, state: DialogueState):
 # EXPANSION ENGINE
 # =========================================================
 def expand_query(user_text, state: DialogueState, act: str):
+    # role must only live inside politics / sports
+    if state.role.value and state.domain.value:
+      if not (
+        state.domain.value.startswith("Politics")
+        or state.domain.value.startswith("Sports")
+    ):
+         return None, "context changed — role not valid anymore"
+
     if act != "contextual_continuation":
         return None, None
 
@@ -280,14 +288,12 @@ def process_turn(user_text, state: DialogueState):
 
         # Treat explicit topic signals as fresh
         if (new_domain and new_domain != state.domain.value) or has_explicit_topic(user_text):
+            if new_domain and (
+        new_domain.startswith("Finance")
+        or new_domain.startswith("General")
+    ):
+         reset_context(state)
             update_state_from_text(user_text, state)
-
-            # ensure role reset when jumping domains
-            if state.domain.value and (
-                state.domain.value.startswith("Finance")
-                or state.domain.value.startswith("General")
-            ):
-                reset_context(state)
 
         else:
             prev_domain = state.domain.value
