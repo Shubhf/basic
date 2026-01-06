@@ -203,11 +203,20 @@ def update_state_from_text(text, state: DialogueState):
 # ========================================
 
 def expand_query(user_text, state: DialogueState, act: str):
+    # If it's not contextual, don't expand
     if act != "contextual_continuation":
         return None, None
 
     t = user_text.lower()
 
+    # 🚨 SAFETY: if domain is Finance / General, expansion should NOT reuse Captain/PM
+    if state.domain.value and state.domain.value.startswith("Finance"):
+        return None, "context changed — no expansion"
+
+    if state.domain.value and state.domain.value.startswith("General"):
+        return None, "context changed — no expansion"
+
+    # need context to expand
     if not state.role.value and not state.subject.value:
         return None, "clarify: not enough context"
 
