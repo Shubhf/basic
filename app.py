@@ -4,7 +4,6 @@ from typing import Optional
 from copy import deepcopy
 import joblib
 
-
 # =========================================================
 # KNOWLEDGE BASE
 # =========================================================
@@ -30,7 +29,6 @@ DUTIES = {
         "and makes tactical decisions during play."
     )
 }
-
 
 # =========================================================
 # STATE STRUCTURES
@@ -67,21 +65,18 @@ class DialogueState:
             "intent": vars(self.intent),
         }
 
-
 # =========================================================
 # MODELS
 # =========================================================
 clf = joblib.load("topic_classifier.pkl")
 vectorizer = joblib.load("topic_vectorizer.pkl")
 
-
 def predict_topic(text):
     vec = vectorizer.transform([text])
     return clf.predict(vec)[0]
 
-
 # =========================================================
-# TOPIC HINTS
+# TOPIC & HINTS
 # =========================================================
 FINANCE_TERMS = [
     "loan", "loans", "emi", "interest",
@@ -92,11 +87,16 @@ FINANCE_TERMS = [
 
 GENERAL_TERMS = ["weather", "population", "capital"]
 
-
 def has_explicit_topic(text: str) -> bool:
     t = text.lower()
     return any(w in t for w in FINANCE_TERMS + GENERAL_TERMS)
 
+SAFE_ROLE_DOMAINS = ["Politics", "Sports"]
+
+def role_allowed(domain):
+    if not domain:
+        return False
+    return any(domain.startswith(d) for d in SAFE_ROLE_DOMAINS)
 
 # =========================================================
 # DETECTORS
@@ -160,7 +160,6 @@ def reset_context(state: DialogueState):
     state.role = ContextFrame()
     state.intent = ContextFrame()
 
-
 def update_state_from_text(text, state: DialogueState):
     new_domain = predict_topic(text)
 
@@ -179,6 +178,11 @@ def update_state_from_text(text, state: DialogueState):
         state.domain.value = new_domain
         state.domain.confidence = 1.0
 
+        # if the domain is not politics/sports → kill leaked role
+        if not role_allowed(state.domain.value):
+            state.role = ContextFrame()
+            state.subject = ContextFrame()
+
     if subject:
         state.subject.value = subject
         state.subject.confidence = 1.0
@@ -196,29 +200,17 @@ def update_state_from_text(text, state: DialogueState):
 # EXPANSION ENGINE
 # =========================================================
 def expand_query(user_text, state: DialogueState, act: str):
-    # role must only live inside politics / sports
-    if state.role.value and state.domain.value:
-      if not (
-        state.domain.value.startswith("Politics")
-        or state.domain.value.startswith("Sports")
-    ):
-         return None, "context changed — role not valid anymore"
+
+    # not politics/sports → never assume pronouns
+    if not role_allowed(state.domain.value):
+        return None, "clarify: whose responsibilities?"
 
     if act != "contextual_continuation":
         return None, None
 
-    # never expand if moved to finance/general
-    if state.domain.value and (
-        state.domain.value.startswith("Finance")
-        or state.domain.value.startswith("General")
-    ):
-        return None, "context changed — no expansion"
-
-    if not state.role.value and not state.subject.value:
-        return None, "clarify: not enough context"
-
     t = user_text.lower()
 
+    # what about <country>
     if "what about" in t:
         new_subject = detect_subject(user_text)
 
@@ -230,22 +222,17 @@ def expand_query(user_text, state: DialogueState, act: str):
 
         return None, "clarify: what exactly do you mean?"
 
+    # duties / responsibilities
     if "duties" in t or "responsibilities" in t:
-        if not (
-        state.domain.value
-        and (
-            state.domain.value.startswith("Politics")
-            or state.domain.value.startswith("Sports")
-        )
-    ):
-          return None, "clarify: whose responsibilities?"
-    if state.role.value and state.subject.value:
-      return (
-            f"What are the duties of the {state.role.value} of {state.subject.value}?",
-            None
-        )
-    return None, "clarify: whose responsibilities?"
+        if state.role.value and state.subject.value:
+            return (
+                f"What are the duties of the {state.role.value} of {state.subject.value}?",
+                None
+            )
 
+        return None, "clarify: whose responsibilities?"
+
+    return None, None
 
 
 # =========================================================
@@ -254,16 +241,12 @@ def expand_query(user_text, state: DialogueState, act: str):
 def answer(expanded, state: DialogueState):
     text = (expanded or "").lower()
 
+    # refuse role leakage
+    if not role_allowed(state.domain.value):
+        return None
+
     role = state.role.value
     subject = state.subject.value
-    domain = state.domain.value
-
-    # block role carryover into finance/general
-    if domain and (
-        domain.startswith("Finance")
-        or domain.startswith("General")
-    ):
-        return None
 
     if "duties" in text and role in DUTIES:
         return DUTIES[role]
@@ -295,18 +278,11 @@ def process_turn(user_text, state: DialogueState):
 
         # Treat explicit topic signals as fresh
         if (new_domain and new_domain != state.domain.value) or has_explicit_topic(user_text):
-            if new_domain and (
-        new_domain.startswith("Finance")
-        or new_domain.startswith("General")
-    ):
-         reset_context(state)
             update_state_from_text(user_text, state)
-
         else:
             prev_domain = state.domain.value
             update_state_from_text(user_text, state)
             state.domain.value = prev_domain
-
     else:
         update_state_from_text(user_text, state)
 
