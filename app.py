@@ -30,6 +30,7 @@ DUTIES = {
     )
 }
 
+
 # ========================================
 # STATE STRUCTURES
 # ========================================
@@ -87,15 +88,12 @@ def predict_topic(text):
 def detect_dialogue_act(text: str) -> str:
     t = text.lower().strip()
 
-    # small talk
     if any(x in t for x in ["thanks", "wait", "ok", "fine"]):
         return "chit_chat"
 
-    # explicit topic shift
     if any(x in t for x in ["now tell me", "switch to", "change topic"]):
         return "topic_shift"
 
-    # TRUE contextual patterns only
     CONTEXT_TRIGGERS = [
         "what about",
         "and what about",
@@ -114,7 +112,6 @@ def detect_dialogue_act(text: str) -> str:
     return "fresh_query"
 
 
-
 def detect_role(text: str):
     t = text.lower()
     if "prime minister" in t or "pm" in t:
@@ -129,19 +126,22 @@ def detect_role(text: str):
 def detect_subject(text: str):
     t = text.lower()
 
+    # Prefer explicit country extraction
     for c in COUNTRIES:
         if c in t:
             return c.title()
 
-    return None
+    # fallback: try last meaningful word (rare)
+    words = t.replace("?", "").replace(".", "").split()
 
+    if not words:
+        return None
 
-    candidate = words[-1].strip("?.!,").title()
+    candidate = words[-1].title()
 
     blocked = {
-        "who", "what", "about", "is",
-        "pm", "captain", "coach",
-        "minister", "president", "leader"
+        "who","what","about","is","pm","captain",
+        "coach","minister","president","leader"
     }
 
     if candidate.lower() in blocked:
@@ -162,7 +162,7 @@ def detect_intent(text: str):
 
 
 # ========================================
-# STATE UPDATE — FIXED
+# STATE UPDATE
 # ========================================
 
 def update_state_from_text(text, state: DialogueState):
@@ -171,7 +171,7 @@ def update_state_from_text(text, state: DialogueState):
     if new_domain == "Unknown":
         new_domain = None
 
-    # If topic changes → RESET dependent context
+    # topic changed → reset dependent context
     if new_domain and new_domain != state.domain.value:
         state.subject = ContextFrame()
         state.role = ContextFrame()
@@ -208,7 +208,6 @@ def expand_query(user_text, state: DialogueState, act: str):
 
     t = user_text.lower()
 
-    # need context to expand
     if not state.role.value and not state.subject.value:
         return None, "clarify: not enough context"
 
@@ -243,7 +242,7 @@ def expand_query(user_text, state: DialogueState, act: str):
 
 
 # ========================================
-# ANSWER LAYER
+# ANSWER
 # ========================================
 
 def answer(expanded, state: DialogueState):
@@ -266,10 +265,6 @@ def answer(expanded, state: DialogueState):
     return None
 
 
-# ========================================
-# TOPIC TAG
-# ========================================
-
 def assign_topic(text, state: DialogueState):
     if state.domain.value:
         return state.domain.value, (state.subject.value or "NA")
@@ -277,7 +272,7 @@ def assign_topic(text, state: DialogueState):
 
 
 # ========================================
-# MAIN TURN LOOP
+# MAIN LOOP
 # ========================================
 
 def process_turn(user_text, state: DialogueState):
@@ -312,7 +307,7 @@ if "conversation" not in st.session_state:
     st.session_state.conversation = []
     st.session_state.state = DialogueState()
 
-user_input = st.text_input("User input", key="u")
+user_input = st.text_input("User input")
 
 if st.button("Submit") and user_input:
     expanded, topic, note, ans, snap = process_turn(
