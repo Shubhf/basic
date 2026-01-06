@@ -4,9 +4,10 @@ from typing import Optional
 from copy import deepcopy
 import joblib
 
-# ========================================
+
+# =========================================================
 # KNOWLEDGE BASE
-# ========================================
+# =========================================================
 COUNTRIES = ["india", "uk", "us", "germany", "france", "australia"]
 
 KNOWLEDGE = {
@@ -31,10 +32,9 @@ DUTIES = {
 }
 
 
-# ========================================
+# =========================================================
 # STATE STRUCTURES
-# ========================================
-
+# =========================================================
 @dataclass
 class ContextFrame:
     value: Optional[str] = None
@@ -68,33 +68,38 @@ class DialogueState:
         }
 
 
-# ========================================
+# =========================================================
 # MODELS
-# ========================================
-
+# =========================================================
 clf = joblib.load("topic_classifier.pkl")
 vectorizer = joblib.load("topic_vectorizer.pkl")
 
-def has_explicit_topic(text: str) -> bool:
-    t = text.lower()
-
-    finance_words = ["loan", "credit", "interest", "bank", "stock", "share"]
-    general_words = ["weather", "population", "capital"]
-    
-    if any(w in t for w in finance_words + general_words):
-        return True
-
-    return False
 
 def predict_topic(text):
     vec = vectorizer.transform([text])
     return clf.predict(vec)[0]
 
 
-# ========================================
-# DETECTORS
-# ========================================
+# =========================================================
+# UTIL HELPERS
+# =========================================================
+FINANCE_TERMS = [
+    "loan", "loans", "emi", "interest",
+    "credit", "debit", "bank",
+    "stock", "stocks", "mutual fund"
+]
 
+GENERAL_TERMS = ["weather", "population", "capital"]
+
+
+def has_explicit_topic(text: str) -> bool:
+    t = text.lower()
+    return any(w in t for w in FINANCE_TERMS + GENERAL_TERMS)
+
+
+# =========================================================
+# DETECTORS
+# =========================================================
 def detect_dialogue_act(text: str) -> str:
     t = text.lower().strip()
 
@@ -105,15 +110,9 @@ def detect_dialogue_act(text: str) -> str:
         return "topic_shift"
 
     CONTEXT_TRIGGERS = [
-        "what about",
-        "and what about",
-        "his",
-        "her",
-        "their",
-        "same there",
-        "same here",
-        "more about",
-        "and there"
+        "what about", "and what about",
+        "his", "her", "their",
+        "more about", "same here", "same there"
     ]
 
     if any(t.startswith(x) or x in t.split() for x in CONTEXT_TRIGGERS):
@@ -136,28 +135,11 @@ def detect_role(text: str):
 def detect_subject(text: str):
     t = text.lower()
 
-    # Prefer explicit country extraction
     for c in COUNTRIES:
         if c in t:
             return c.title()
 
-    # fallback: try last meaningful word (rare)
-    words = t.replace("?", "").replace(".", "").split()
-
-    if not words:
-        return None
-
-    candidate = words[-1].title()
-
-    blocked = {
-        "who","what","about","is","pm","captain",
-        "coach","minister","president","leader"
-    }
-
-    if candidate.lower() in blocked:
-        return None
-
-    return candidate
+    return None
 
 
 def detect_intent(text: str):
@@ -171,17 +153,16 @@ def detect_intent(text: str):
     return None
 
 
-# ========================================
+# =========================================================
 # STATE UPDATE
-# ========================================
-
+# =========================================================
 def update_state_from_text(text, state: DialogueState):
     new_domain = predict_topic(text)
 
     if new_domain == "Unknown":
         new_domain = None
 
-    # topic changed → reset dependent context
+    # topic changed completely → reset dependent context
     if new_domain and new_domain != state.domain.value:
         state.subject = ContextFrame()
         state.role = ContextFrame()
@@ -208,38 +189,33 @@ def update_state_from_text(text, state: DialogueState):
         state.intent.confidence = 1.0
 
 
-# ========================================
-# EXPANSION
-# ========================================
-
+# =========================================================
+# EXPANSION ENGINE
+# =========================================================
 def expand_query(user_text, state: DialogueState, act: str):
-    # If it's not contextual, don't expand
     if act != "contextual_continuation":
         return None, None
 
     t = user_text.lower()
 
-    # 🚨 SAFETY: if domain is Finance / General, expansion should NOT reuse Captain/PM
-    if state.domain.value and state.domain.value.startswith("Finance"):
+    # If domain is finance or general → don’t reuse captain/pm memory
+    if state.domain.value and (
+        state.domain.value.startswith("Finance")
+        or state.domain.value.startswith("General")
+    ):
         return None, "context changed — no expansion"
 
-    if state.domain.value and state.domain.value.startswith("General"):
-        return None, "context changed — no expansion"
-
-    # need context to expand
     if not state.role.value and not state.subject.value:
         return None, "clarify: not enough context"
 
     if "what about" in t:
         new_subject = detect_subject(user_text)
 
-        if new_subject:
-            if state.role.value:
-                return f"Who is the {state.role.value} of {new_subject}?", None
-            return f"Tell me more about {new_subject}.", None
+        if new_subject and state.role.value:
+            return f"Who is the {state.role.value} of {new_subject}?", None
 
-        if state.role.value and state.subject.value:
-            return f"Who is the {state.role.value} of {state.subject.value}?", None
+        if new_subject:
+            return f"Tell me more about {new_subject}.", None
 
         return None, "clarify: what exactly do you mean?"
 
@@ -251,19 +227,12 @@ def expand_query(user_text, state: DialogueState, act: str):
             )
         return None, "clarify: whose duties?"
 
-    if state.role.value and state.subject.value:
-        return (
-            f"Tell me more about the {state.role.value} of {state.subject.value}.",
-            None
-        )
-
-    return None, "clarify: cannot infer expansion"
+    return None, None
 
 
-# ========================================
-# ANSWER
-# ========================================
-
+# =========================================================
+# ANSWER ENGINE
+# =========================================================
 def answer(expanded, state: DialogueState):
     text = (expanded or "").lower()
 
@@ -271,25 +240,17 @@ def answer(expanded, state: DialogueState):
     subject = state.subject.value
     domain = state.domain.value
 
-    # If domain moved to Finance / General → DO NOT use role memory
+    # prevent bad carryover into finance/general
     if domain and (domain.startswith("Finance") or domain.startswith("General")):
         return None
 
-    # duties
-    if "duties" in text or "responsibilities" in text:
-        if role in DUTIES:
-            return DUTIES[role]
-        return None
+    if "duties" in text and role in DUTIES:
+        return DUTIES[role]
 
-    # factual lookup
     if role and subject and (role, subject) in KNOWLEDGE:
         return KNOWLEDGE[(role, subject)]
 
-    if role and subject:
-        return f"I don't have the exact answer for {role} of {subject} yet."
-
     return None
-
 
 
 def assign_topic(text, state: DialogueState):
@@ -298,10 +259,9 @@ def assign_topic(text, state: DialogueState):
     return "General", "NA"
 
 
-# ========================================
-# MAIN LOOP
-# ========================================
-
+# =========================================================
+# MAIN TURN LOOP
+# =========================================================
 def process_turn(user_text, state: DialogueState):
     state.decay_all()
     act = detect_dialogue_act(user_text)
@@ -309,40 +269,28 @@ def process_turn(user_text, state: DialogueState):
     if act == "chit_chat":
         return None, ("General", "NA"), "chit_chat", None, state.snapshot()
 
-    # === SMART CONTEXT BEHAVIOR ===
     if act == "contextual_continuation":
         new_domain = predict_topic(user_text)
 
-    # 🚨 if user clearly brings new topic, treat it as fresh
-        if new_domain and new_domain != state.domain.value or has_explicit_topic(user_text):
+        if (new_domain and new_domain != state.domain.value) or has_explicit_topic(user_text):
             update_state_from_text(user_text, state)
-
         else:
             prev_domain = state.domain.value
             update_state_from_text(user_text, state)
             state.domain.value = prev_domain
-
-
     else:
         update_state_from_text(user_text, state)
 
-    # Expansion
     expanded, note = expand_query(user_text, state, act)
-
-    # Topic tagging
     topic = assign_topic(expanded or user_text, state)
-
-    # Answer layer
     ans = answer(expanded, state)
 
     return expanded, topic, note, ans, state.snapshot()
 
 
-
-# ========================================
+# =========================================================
 # UI
-# ========================================
-
+# =========================================================
 st.set_page_config(page_title="Context-Aware Expansion", layout="wide")
 st.title("Context-Aware Query Expansion (Subject-based)")
 
