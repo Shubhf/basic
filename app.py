@@ -75,6 +75,16 @@ class DialogueState:
 clf = joblib.load("topic_classifier.pkl")
 vectorizer = joblib.load("topic_vectorizer.pkl")
 
+def has_explicit_topic(text: str) -> bool:
+    t = text.lower()
+
+    finance_words = ["loan", "credit", "interest", "bank", "stock", "share"]
+    general_words = ["weather", "population", "capital"]
+    
+    if any(w in t for w in finance_words + general_words):
+        return True
+
+    return False
 
 def predict_topic(text):
     vec = vectorizer.transform([text])
@@ -303,15 +313,15 @@ def process_turn(user_text, state: DialogueState):
     if act == "contextual_continuation":
         new_domain = predict_topic(user_text)
 
-        # If the user clearly introduced a new topic → SWITCH
-        if new_domain and new_domain != state.domain.value:
+    # 🚨 if user clearly brings new topic, treat it as fresh
+        if new_domain and new_domain != state.domain.value or has_explicit_topic(user_text):
             update_state_from_text(user_text, state)
 
-        # If vague continuation → reuse previous topic
         else:
             prev_domain = state.domain.value
             update_state_from_text(user_text, state)
             state.domain.value = prev_domain
+
 
     else:
         update_state_from_text(user_text, state)
