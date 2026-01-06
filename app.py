@@ -81,12 +81,13 @@ def predict_topic(text):
 
 
 # =========================================================
-# UTIL HELPERS
+# TOPIC HINTS
 # =========================================================
 FINANCE_TERMS = [
     "loan", "loans", "emi", "interest",
-    "credit", "debit", "bank",
-    "stock", "stocks", "mutual fund"
+    "credit", "debit", "bank", "score",
+    "card", "cards", "stock", "stocks",
+    "mutual fund", "investment"
 ]
 
 GENERAL_TERMS = ["weather", "population", "capital"]
@@ -109,13 +110,13 @@ def detect_dialogue_act(text: str) -> str:
     if any(x in t for x in ["now tell me", "switch to", "change topic"]):
         return "topic_shift"
 
-    CONTEXT_TRIGGERS = [
+    triggers = [
         "what about", "and what about",
         "his", "her", "their",
         "more about", "same here", "same there"
     ]
 
-    if any(t.startswith(x) or x in t.split() for x in CONTEXT_TRIGGERS):
+    if any(t.startswith(x) or x in t.split() for x in triggers):
         return "contextual_continuation"
 
     return "fresh_query"
@@ -134,11 +135,9 @@ def detect_role(text: str):
 
 def detect_subject(text: str):
     t = text.lower()
-
     for c in COUNTRIES:
         if c in t:
             return c.title()
-
     return None
 
 
@@ -156,17 +155,21 @@ def detect_intent(text: str):
 # =========================================================
 # STATE UPDATE
 # =========================================================
+def reset_context(state: DialogueState):
+    state.subject = ContextFrame()
+    state.role = ContextFrame()
+    state.intent = ContextFrame()
+
+
 def update_state_from_text(text, state: DialogueState):
     new_domain = predict_topic(text)
 
     if new_domain == "Unknown":
         new_domain = None
 
-    # topic changed completely → reset dependent context
+    # topic switch → full reset
     if new_domain and new_domain != state.domain.value:
-        state.subject = ContextFrame()
-        state.role = ContextFrame()
-        state.intent = ContextFrame()
+        reset_context(state)
 
     role = detect_role(text)
     subject = detect_subject(text)
@@ -196,9 +199,7 @@ def expand_query(user_text, state: DialogueState, act: str):
     if act != "contextual_continuation":
         return None, None
 
-    t = user_text.lower()
-
-    # If domain is finance or general → don’t reuse captain/pm memory
+    # never expand if moved to finance/general
     if state.domain.value and (
         state.domain.value.startswith("Finance")
         or state.domain.value.startswith("General")
@@ -207,6 +208,8 @@ def expand_query(user_text, state: DialogueState, act: str):
 
     if not state.role.value and not state.subject.value:
         return None, "clarify: not enough context"
+
+    t = user_text.lower()
 
     if "what about" in t:
         new_subject = detect_subject(user_text)
@@ -240,8 +243,11 @@ def answer(expanded, state: DialogueState):
     subject = state.subject.value
     domain = state.domain.value
 
-    # prevent bad carryover into finance/general
-    if domain and (domain.startswith("Finance") or domain.startswith("General")):
+    # block role carryover into finance/general
+    if domain and (
+        domain.startswith("Finance")
+        or domain.startswith("General")
+    ):
         return None
 
     if "duties" in text and role in DUTIES:
@@ -272,12 +278,22 @@ def process_turn(user_text, state: DialogueState):
     if act == "contextual_continuation":
         new_domain = predict_topic(user_text)
 
+        # Treat explicit topic signals as fresh
         if (new_domain and new_domain != state.domain.value) or has_explicit_topic(user_text):
             update_state_from_text(user_text, state)
+
+            # ensure role reset when jumping domains
+            if state.domain.value and (
+                state.domain.value.startswith("Finance")
+                or state.domain.value.startswith("General")
+            ):
+                reset_context(state)
+
         else:
             prev_domain = state.domain.value
             update_state_from_text(user_text, state)
             state.domain.value = prev_domain
+
     else:
         update_state_from_text(user_text, state)
 
