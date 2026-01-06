@@ -231,14 +231,21 @@ def expand_query(user_text, state: DialogueState, act: str):
         return None, "clarify: what exactly do you mean?"
 
     if "duties" in t or "responsibilities" in t:
-        if state.role.value and state.subject.value:
-            return (
-                f"What are the duties of the {state.role.value} of {state.subject.value}?",
-                None
-            )
-        return None, "clarify: whose duties?"
+        if not (
+        state.domain.value
+        and (
+            state.domain.value.startswith("Politics")
+            or state.domain.value.startswith("Sports")
+        )
+    ):
+          return None, "clarify: whose responsibilities?"
+    if state.role.value and state.subject.value:
+      return (
+            f"What are the duties of the {state.role.value} of {state.subject.value}?",
+            None
+        )
+    return None, "clarify: whose responsibilities?"
 
-    return None, None
 
 
 # =========================================================
