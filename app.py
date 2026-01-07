@@ -76,21 +76,8 @@ def predict_topic(text):
     return clf.predict(vec)[0]
 
 # =========================================================
-# TOPIC & HINTS
+# TOPIC HELPERS
 # =========================================================
-FINANCE_TERMS = [
-    "loan", "loans", "emi", "interest",
-    "credit", "debit", "bank", "score",
-    "card", "cards", "stock", "stocks",
-    "mutual fund", "investment"
-]
-
-GENERAL_TERMS = ["weather", "population", "capital"]
-
-def has_explicit_topic(text: str) -> bool:
-    t = text.lower()
-    return any(w in t for w in FINANCE_TERMS + GENERAL_TERMS)
-
 SAFE_ROLE_DOMAINS = ["Politics", "Sports"]
 
 def role_allowed(domain):
@@ -98,22 +85,28 @@ def role_allowed(domain):
         return False
     return any(domain.startswith(d) for d in SAFE_ROLE_DOMAINS)
 
-# =========================================================
-# HELPERS
-# =========================================================
+
+def infer_domain_from_role(role: Optional[str]) -> Optional[str]:
+    if not role:
+        return None
+
+    if role in ["Prime Minister", "President"]:
+        return "Politics"
+
+    if role in ["Captain", "Coach"]:
+        return "Sports"
+
+    return None
+
+
 def mentions_responsibilities(text: str) -> bool:
     t = text.lower()
-
     candidates = [
-        "responsibility",
-        "responsibilities",
-        "responsibilites",
-        "responsiblities",
+        "responsibility", "responsibilities",
+        "responsibilites", "responsiblities",
         "responsibilties",
-        "duty",
-        "duties"
+        "duty", "duties"
     ]
-
     return any(c in t for c in candidates)
 
 # =========================================================
@@ -178,17 +171,21 @@ def reset_context(state: DialogueState):
     state.intent = ContextFrame()
 
 def update_state_from_text(text, state: DialogueState):
-    new_domain = predict_topic(text)
+    predicted_domain = predict_topic(text)
 
-    if new_domain == "Unknown":
-        new_domain = None
-
-    if new_domain and new_domain != state.domain.value:
-        reset_context(state)
+    if predicted_domain == "Unknown":
+        predicted_domain = None
 
     role = detect_role(text)
     subject = detect_subject(text)
     intent = detect_intent(text)
+
+    # override classifier if role implies domain
+    inferred_domain = infer_domain_from_role(role)
+    new_domain = inferred_domain or predicted_domain
+
+    if new_domain and new_domain != state.domain.value:
+        reset_context(state)
 
     if new_domain:
         state.domain.value = new_domain
@@ -210,24 +207,21 @@ def update_state_from_text(text, state: DialogueState):
         state.intent.value = intent
         state.intent.confidence = 1.0
 
-
 # =========================================================
 # EXPANSION ENGINE
 # =========================================================
 def expand_query(user_text, state: DialogueState, act: str):
     t = user_text.lower()
 
-    # If we're outside politics/sports — don't assume
     if not role_allowed(state.domain.value):
         return None, "could you clarify who you're referring to?"
 
     if act != "contextual_continuation":
         return None, None
 
-    # ---- WHAT ABOUT ----
+    # WHAT ABOUT
     if "what about" in t:
 
-        # pronoun case
         if any(p in t for p in ["his", "her", "their"]):
 
             if mentions_responsibilities(user_text):
@@ -250,7 +244,7 @@ def expand_query(user_text, state: DialogueState, act: str):
 
         return None, "could you clarify what exactly you mean?"
 
-    # ---- DIRECT RESPONSIBILITIES ----
+    # DIRECT RESPONSIBILITIES
     if mentions_responsibilities(user_text):
         if state.role.value and state.subject.value:
             return (
@@ -260,7 +254,6 @@ def expand_query(user_text, state: DialogueState, act: str):
         return None, "could you clarify whose responsibilities?"
 
     return None, None
-
 
 # =========================================================
 # ANSWER ENGINE
@@ -293,22 +286,10 @@ def assign_topic(text, state: DialogueState):
 # =========================================================
 def process_turn(user_text, state: DialogueState):
     state.decay_all()
+
     act = detect_dialogue_act(user_text)
 
-    if act == "chit_chat":
-        return None, ("General", "NA"), "chit_chat", None, state.snapshot()
-
-    if act == "contextual_continuation":
-        new_domain = predict_topic(user_text)
-
-        if (new_domain and new_domain != state.domain.value) or has_explicit_topic(user_text):
-            update_state_from_text(user_text, state)
-        else:
-            prev_domain = state.domain.value
-            update_state_from_text(user_text, state)
-            state.domain.value = prev_domain
-    else:
-        update_state_from_text(user_text, state)
+    update_state_from_text(user_text, state)
 
     expanded, note = expand_query(user_text, state, act)
     topic = assign_topic(expanded or user_text, state)
